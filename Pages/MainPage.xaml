@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="MyFitnessRPG.Views.MainPage"
+             Title="Create Your Hero">
+
+    <ScrollView>
+        <VerticalStackLayout Padding="20" Spacing="20">
+
+            <Label Text="Create Your Hero"
+                   FontSize="28"
+                   HorizontalOptions="Center" />
+
+            <!-- Hero Name Input -->
+            <Entry x:Name="HeroNameEntry"
+                   Placeholder="Enter hero name" />
+
+            <!-- Hero Class Dropdown -->
+            <Picker x:Name="HeroClassPicker"
+                    Title="Select hero class">
+                <Picker.Items>
+                    <x:String>Warrior</x:String>
+                    <x:String>Ranger</x:String>
+                    <x:String>Mage</x:String>
+                    <x:String>Rogue</x:String>
+                </Picker.Items>
+            </Picker>
+
+            <!-- Create Button -->
+            <Button Text="Create Hero"
+                    x:Name="CreateHeroButton"
+                    Clicked="OnCreateHeroClicked"
+                    BackgroundColor="#5b8df3"
+                    TextColor="White"
+                    CornerRadius="10"
+                    HeightRequest="50"/>
+
+            <!-- Results Display -->
+            <Label x:Name="ResultLabel"
+                   FontSize="18"
+                   TextColor="Green"
+                   HorizontalOptions="Center" />
+
+        </VerticalStackLayout>
+    </ScrollView>
+
+</ContentPage>
