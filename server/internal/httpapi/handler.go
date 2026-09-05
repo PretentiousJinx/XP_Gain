@@ -10,25 +10,30 @@ import (
 	"github.com/PretentiousJinx/xpgain/server/internal/vision"
 )
 
-// API wires the service into HTTP handlers.
+// API wires the service and the token verifier into HTTP handlers.
 type API struct {
 	svc  *service.Service
-	auth func(*http.Request) (string, bool)
+	auth Authenticator
 }
 
-// New builds the API. authFn resolves a request to a user ID; swap in real
-// token verification at the edge and this layer does not change.
-func New(svc *service.Service, authFn func(*http.Request) (string, bool)) *API {
-	return &API{svc: svc, auth: authFn}
+// New builds the API. The Authenticator is required; there is no unauthenticated
+// mode, so a misconfigured deployment fails at startup rather than silently
+// serving every request as an anonymous user.
+func New(svc *service.Service, authenticator Authenticator) *API {
+	return &API{svc: svc, auth: authenticator}
 }
 
 // Routes returns the mux. Go 1.22 method-aware patterns remove the need for a
 // third-party router for a surface this small.
+//
+// Auth is applied per route rather than to the whole mux, so adding a route
+// is an explicit decision about whether it is public. /healthz is the only
+// public one.
 func (a *API) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", a.health)
-	mux.HandleFunc("POST /v1/intake/photo", a.postPhoto)
-	mux.HandleFunc("POST /v1/intake/manual", a.postManual)
+	mux.Handle("POST /v1/intake/photo", a.requireAuth(http.HandlerFunc(a.postPhoto)))
+	mux.Handle("POST /v1/intake/manual", a.requireAuth(http.HandlerFunc(a.postManual)))
 	return withRecovery(withLogging(mux))
 }
 
@@ -37,6 +42,9 @@ func (a *API) health(w http.ResponseWriter, _ *http.Request) {
 }
 
 // photoRequestBody is the wire shape for both a first attempt and a reattempt.
+//
+// Note the absence of any user field: identity comes from the verified token
+// alone, so there is nothing here a client could set to act as someone else.
 type photoRequestBody struct {
 	ClientEntryID string         `json:"client_entry_id"`
 	PhotoURI      string         `json:"photo_uri"`
@@ -52,9 +60,9 @@ type photoRequestBody struct {
 // a separate /reattempt endpoint would duplicate the whole validation path to
 // express a single nullable link.
 func (a *API) postPhoto(w http.ResponseWriter, r *http.Request) {
-	userID, ok := a.auth(r)
+	userID, ok := UserIDFrom(r.Context())
 	if !ok {
-		writeJSON(w, http.StatusUnauthorized, ErrorBody{Code: "unauthorized", Message: "Sign in required."})
+		unauthorized(w, "unauthorized", "Sign in required.")
 		return
 	}
 
@@ -100,9 +108,9 @@ type manualRequestBody struct {
 // choose its own pedigree: is_manual is derived from the route, not read from
 // the body, so a client cannot submit typed numbers labelled as AI-verified.
 func (a *API) postManual(w http.ResponseWriter, r *http.Request) {
-	userID, ok := a.auth(r)
+	userID, ok := UserIDFrom(r.Context())
 	if !ok {
-		writeJSON(w, http.StatusUnauthorized, ErrorBody{Code: "unauthorized", Message: "Sign in required."})
+		unauthorized(w, "unauthorized", "Sign in required.")
 		return
 	}
 
@@ -113,9 +121,9 @@ func (a *API) postManual(w http.ResponseWriter, r *http.Request) {
 	}
 
 	req := service.ManualRequest{
-		UserID:        userID,
-		ClientEntryID: body.ClientEntryID,
-		Macros: domainMacros(body.KCal, body.ProteinG, body.CarbsG, body.FatG),
+		UserID:                userID,
+		ClientEntryID:         body.ClientEntryID,
+		Macros:                domainMacros(body.KCal, body.ProteinG, body.CarbsG, body.FatG),
 		SupersedesRejectionID: body.SupersedesRejectionID,
 	}
 	if body.LoggedAt != nil {

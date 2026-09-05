@@ -252,8 +252,10 @@ nothing but the Flutter SDK. Only `flutter run` needs a platform toolchain
 
 | Suite | Tests | What it covers |
 |---|---|---|
-| `internal/domain` | 9 | Stat economy: goal clamping, non-farmability, manual XP penalty, streak transitions, level-up carry |
+| `internal/domain` | 6 | Stat economy: goal clamping, non-farmability, manual XP penalty, streak transitions, level-up carry |
 | `internal/service` | 11 | Path A atomicity, Path B reasoning + no side effects, manual override pedigree, reattempt linking, double-resolve refusal, idempotent replay, concurrent writes, sync sweep + failed-push safety |
+| `internal/auth` | 19 | Signature forgery, `alg:none`, HS256 confusion, tampering, cross-project tokens, wrong issuer/audience, expiry, future `iat`/`auth_time`, subject rules, unknown/missing `kid`, garbage input |
+| `internal/httpapi` | 10 | Missing and malformed credentials, scheme case-insensitivity, route gating, verifier wiring, error-detail leakage, context forgery, identity binding end to end |
 | `app/test` | 16 | Draw-call counting via a recording canvas, hidden-layer skip, slot draw order, stance row selection, frame advance and loop wrap, composite frame alignment, missing-sheet tolerance, widget lifecycle |
 
 `TestConcurrentSubmitsSerialiseCleanly` exercises the two-pool design — 20
@@ -264,6 +266,26 @@ goroutines against one SQLite file, asserting no lost updates. Run 50x clean, an
 `_RecordingCanvas` rather than trusting the model. It has been mutation-tested:
 changing `shouldDraw` to ignore `isVisible` makes it fail with `Expected: <2>
 Actual: <3>`, so it genuinely catches the regression it exists to prevent.
+
+### Mutation testing
+
+Security and invariant tests were checked against deliberately broken code, since
+a test that passes on a broken implementation is worse than no test. Dropping
+`WithAudience`, `WithIssuer`, `WithExpirationRequired`, the subject checks, or the
+`auth_time` check each makes the corresponding test fail, as intended.
+
+Two mutations *survived*, and both turned out to be defence in depth rather than
+weak tests:
+
+- Removing `jwt.WithValidMethods` does not admit `alg:none` or an HS256 token
+  keyed on the public key, because the key function returns a concrete
+  `*rsa.PublicKey` and jwt/v5 rejects the type mismatch on its own.
+- Removing `requireAuth` from a route still returns 401, because the handler
+  independently refuses a request with no UID in context.
+
+The second one did reveal a genuinely weak test. `TestEveryProtectedRouteConsultsTheVerifier`
+was added to close it: it asserts the verifier was actually *called*, which is
+what distinguishes a wired middleware from a coincidentally correct status code.
 
 ### Running the race detector
 
@@ -280,10 +302,12 @@ CGO_ENABLED=1 go test -race ./...
 ### API
 
 ```
-GET  /healthz
-POST /v1/intake/photo    { client_entry_id, photo_uri, vision: {...},
+GET  /healthz                       (public)
+POST /v1/intake/photo    (Bearer token required)
+                         { client_entry_id, photo_uri, vision: {...},
                            supersedes_rejection_id? }
-POST /v1/intake/manual   { client_entry_id, kcal, protein_g, carbs_g, fat_g,
+POST /v1/intake/manual   (Bearer token required)
+                         { client_entry_id, kcal, protein_g, carbs_g, fat_g,
                            supersedes_rejection_id? }
 ```
 
@@ -305,13 +329,46 @@ original result (`"replayed": true`) rather than double-logging.
 
 ---
 
+## Authentication
+
+Every `/v1/*` route is behind `requireAuth`, which verifies a Firebase Auth ID
+token. `/healthz` is the only public route, and auth is applied per route so
+adding an endpoint forces an explicit decision about whether it is public.
+
+The server refuses to start without a project ID:
+
+```bash
+FIREBASE_PROJECT_ID=your-project-id go run ./cmd/api
+```
+
+That ID is the security boundary. It is checked against the token's `aud` and
+`iss`, and without it a valid ID token minted for *any other Firebase project*
+would authenticate here.
+
+Verification applies every rule Firebase documents: RS256 only, a `kid` matching
+a current Google signing key, a valid signature, `aud` equal to the project ID,
+`iss` equal to `https://securetoken.google.com/<project>`, `exp` in the future,
+`iat` and `auth_time` in the past, and a non-empty `sub` within the 128-character
+UID limit. A 10-second leeway absorbs clock skew; it is kept small because leeway
+on `exp` extends the window in which an expired token is still accepted.
+
+Google's signing certificates are fetched and cached per their `Cache-Control`
+max-age, refreshed on an unknown `kid`, and rate-limited so a stream of bogus
+`kid`s cannot be turned into a request amplifier. If Google is briefly
+unreachable, a stale-but-known key is still used — the signature remains valid
+and the token's own `exp` still bounds acceptance.
+
+Identity comes from the verified token alone. No request body carries a user
+field, the context key is a private type so nothing outside the package can plant
+a UID, and rejection reasons are logged but never returned to the caller.
+
 ## Not done yet
 
-- **Auth is a placeholder.** `bearerUserID` in `cmd/api/main.go` trusts the bearer
-  token as a user ID. Any client can act as any user. Replace with Firebase Auth
-  ID token verification before this is reachable off localhost.
 - **No Firebase client.** `SweepOnce` needs its `push` callback implemented and a
   ticker to drive it.
+- **No token revocation check.** A signed, unexpired token stays valid for up to
+  an hour after a session is revoked or a password changes. Closing that needs a
+  check against the Firebase Admin API or a local revocation list.
 - **No user/character provisioning.** The schema and intake path assume rows in
   `users` and `characters`; there is no signup endpoint yet.
 - **No real sprite sheets.** `app/lib/main.dart` synthesises placeholder sheets so

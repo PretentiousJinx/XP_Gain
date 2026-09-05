@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -18,6 +17,7 @@ import (
 	// user's local date would silently collapse to UTC and break their streak.
 	_ "time/tzdata"
 
+	"github.com/PretentiousJinx/xpgain/server/internal/auth"
 	"github.com/PretentiousJinx/xpgain/server/internal/httpapi"
 	"github.com/PretentiousJinx/xpgain/server/internal/service"
 	"github.com/PretentiousJinx/xpgain/server/internal/store"
@@ -28,10 +28,26 @@ func main() {
 		addr    = flag.String("addr", ":8080", "listen address")
 		dbPath  = flag.String("db", "xpgain.db", "path to the SQLite database file")
 		readers = flag.Int("readers", 4, "size of the read connection pool")
+		project = flag.String("firebase-project", os.Getenv("FIREBASE_PROJECT_ID"),
+			"Firebase project ID (or set FIREBASE_PROJECT_ID)")
 	)
 	flag.Parse()
 
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
+
+	// Refuse to start without a project ID rather than falling back to an
+	// unauthenticated mode. A server that boots and quietly accepts anonymous
+	// traffic is far more dangerous than one that fails loudly here: the
+	// project ID is what binds a token to *this* Firebase project, and without
+	// it a valid ID token from any other project would authenticate.
+	verifier, err := auth.NewVerifier(*project)
+	if err != nil {
+		slog.Error("firebase auth is not configured",
+			"err", err,
+			"hint", "pass -firebase-project or set FIREBASE_PROJECT_ID")
+		os.Exit(1)
+	}
+	slog.Info("firebase auth configured", "project", *project)
 
 	db, err := store.Open(*dbPath, *readers)
 	if err != nil {
@@ -40,7 +56,7 @@ func main() {
 	}
 	defer db.Close()
 
-	api := httpapi.New(service.New(db), bearerUserID)
+	api := httpapi.New(service.New(db), verifier)
 
 	srv := &http.Server{
 		Addr:              *addr,
@@ -71,24 +87,4 @@ func main() {
 	if err := srv.Shutdown(ctx); err != nil {
 		slog.Error("shutdown", "err", err)
 	}
-}
-
-// bearerUserID is a development stand-in for real auth. It trusts the bearer
-// token as a user ID.
-//
-// PLACEHOLDER -- do not ship. Replace with verification of a signed token
-// (Firebase Auth ID token, or your own JWT) before this service is reachable
-// from anything but localhost. As written, any client can act as any user by
-// typing their ID.
-func bearerUserID(r *http.Request) (string, bool) {
-	const prefix = "Bearer "
-	h := r.Header.Get("Authorization")
-	if !strings.HasPrefix(h, prefix) {
-		return "", false
-	}
-	token := strings.TrimSpace(strings.TrimPrefix(h, prefix))
-	if token == "" {
-		return "", false
-	}
-	return token, true
 }
