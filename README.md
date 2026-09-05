@@ -250,19 +250,32 @@ nothing but the Flutter SDK. Only `flutter run` needs a platform toolchain
 
 ### Test coverage
 
-| Suite | What it covers |
-|---|---|
-| `internal/domain` | Stat economy: goal clamping, non-farmability, manual XP penalty, streak transitions, level-up carry |
-| `internal/service` | Path A atomicity, Path B reasoning + no side effects, manual override pedigree, reattempt linking, double-resolve refusal, idempotent replay, concurrent writes, sync sweep + failed-push safety |
-| `app/test` | Visibility toggle does not move Total Power Level; unequip does; slot draw order |
+| Suite | Tests | What it covers |
+|---|---|---|
+| `internal/domain` | 9 | Stat economy: goal clamping, non-farmability, manual XP penalty, streak transitions, level-up carry |
+| `internal/service` | 11 | Path A atomicity, Path B reasoning + no side effects, manual override pedigree, reattempt linking, double-resolve refusal, idempotent replay, concurrent writes, sync sweep + failed-push safety |
+| `app/test` | 16 | Draw-call counting via a recording canvas, hidden-layer skip, slot draw order, stance row selection, frame advance and loop wrap, composite frame alignment, missing-sheet tolerance, widget lifecycle |
 
-`TestConcurrentSubmitsSerialiseCleanly` is the one that exercises the two-pool
-design — 20 goroutines against one SQLite file, asserting no lost updates. It has
-been run 50x clean.
+`TestConcurrentSubmitsSerialiseCleanly` exercises the two-pool design — 20
+goroutines against one SQLite file, asserting no lost updates. Run 50x clean, and
+25x clean under `-race` (500 concurrent submits).
 
-**`go test -race` has not been run**: the race detector requires cgo, and this
-machine has no C compiler. Install one (e.g. MSYS2 or TDM-GCC) and run
-`CGO_ENABLED=1 go test -race ./...` to close that gap.
+`a hidden layer issues NO draw call` counts real `drawImageRect` calls through a
+`_RecordingCanvas` rather than trusting the model. It has been mutation-tested:
+changing `shouldDraw` to ignore `isVisible` makes it fail with `Expected: <2>
+Actual: <3>`, so it genuinely catches the regression it exists to prevent.
+
+### Running the race detector
+
+Needs cgo, so a C compiler must be on PATH:
+
+```bash
+winget install --id BrechtSanders.WinLibs.POSIX.UCRT --source winget
+```
+
+```bash
+CGO_ENABLED=1 go test -race ./...
+```
 
 ### API
 
@@ -304,8 +317,7 @@ original result (`"replayed": true`) rather than double-logging.
 - **No real sprite sheets.** `app/lib/main.dart` synthesises placeholder sheets so
   the renderer runs before the art exists. `art/aseprite/Sprite-0001.aseprite` is
   the only source art carried over.
-- **The renderer has no widget test.** The model invariants are covered, but
-  nothing yet asserts that a hidden layer produces no draw call — that needs a
-  golden test or a recording canvas.
 - **No HTTP-layer tests.** `internal/httpapi` is exercised only indirectly; the
   422 body shape and the auth gate are unverified.
+- **No golden-image test.** Draw calls are asserted, but nothing checks the
+  rasterised output, so a scaling or registration regression would pass.
