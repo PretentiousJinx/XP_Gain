@@ -218,30 +218,51 @@ Covered by `app/test/character_state_test.dart`.
 
 ## Running it
 
-Neither toolchain is installed on this machine, so **none of this has been
-compiled or run.** Install first:
+Verified on Go 1.27.0 and Flutter 3.47.2 / Dart 3.13.2.
 
 ```bash
-winget install GoLang.Go
+cd server && go build ./... && go test ./...
 ```
 
 ```bash
-git clone https://github.com/flutter/flutter.git -b stable "$HOME/flutter"
+cd app && flutter pub get && flutter test && flutter analyze
 ```
 
-Then resolve the dependency graph and build:
+### Toolchain setup
+
+Go is in winget:
 
 ```bash
-cd server && go mod tidy && go build ./... && go test ./...
+winget install --id GoLang.Go --source winget
 ```
+
+Flutter is **not** in winget — `Google.Flutter`, `Flutter.Flutter` and
+`Google.FlutterSDK` do not exist, and `Google.DartSDK` is Dart alone. Clone it:
 
 ```bash
-cd app && flutter pub get && flutter test && flutter run
+git clone https://github.com/flutter/flutter.git -b stable C:/flutter
 ```
 
-`go mod tidy` is required — `go.mod` lists only the direct dependency
-(`modernc.org/sqlite`, a pure-Go driver chosen so no cgo/gcc is needed) and the
-indirect graph has not been resolved.
+`go build`/`go test` need nothing but Go — the SQLite driver is `modernc.org/sqlite`,
+pure Go, chosen so no cgo/gcc is required. `flutter test`/`flutter analyze` need
+nothing but the Flutter SDK. Only `flutter run` needs a platform toolchain
+(Visual Studio "Desktop development with C++" for Windows; Android SDK for a phone).
+
+### Test coverage
+
+| Suite | What it covers |
+|---|---|
+| `internal/domain` | Stat economy: goal clamping, non-farmability, manual XP penalty, streak transitions, level-up carry |
+| `internal/service` | Path A atomicity, Path B reasoning + no side effects, manual override pedigree, reattempt linking, double-resolve refusal, idempotent replay, concurrent writes, sync sweep + failed-push safety |
+| `app/test` | Visibility toggle does not move Total Power Level; unequip does; slot draw order |
+
+`TestConcurrentSubmitsSerialiseCleanly` is the one that exercises the two-pool
+design — 20 goroutines against one SQLite file, asserting no lost updates. It has
+been run 50x clean.
+
+**`go test -race` has not been run**: the race detector requires cgo, and this
+machine has no C compiler. Install one (e.g. MSYS2 or TDM-GCC) and run
+`CGO_ENABLED=1 go test -race ./...` to close that gap.
 
 ### API
 
@@ -283,4 +304,8 @@ original result (`"replayed": true`) rather than double-logging.
 - **No real sprite sheets.** `app/lib/main.dart` synthesises placeholder sheets so
   the renderer runs before the art exists. `art/aseprite/Sprite-0001.aseprite` is
   the only source art carried over.
-- **Nothing has been compiled or tested.**
+- **The renderer has no widget test.** The model invariants are covered, but
+  nothing yet asserts that a hidden layer produces no draw call — that needs a
+  golden test or a recording canvas.
+- **No HTTP-layer tests.** `internal/httpapi` is exercised only indirectly; the
+  422 body shape and the auth gate are unverified.
