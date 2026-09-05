@@ -374,3 +374,86 @@ func truncate(s string) string {
 	}
 	return s
 }
+
+// --- revocation ------------------------------------------------------------
+
+type fakeRevoker struct {
+	err    error
+	calls  int
+	gotUID string
+	gotAT  time.Time
+}
+
+func (f *fakeRevoker) CheckRevoked(_ context.Context, uid string, authTime time.Time) error {
+	f.calls++
+	f.gotUID = uid
+	f.gotAT = authTime
+	return f.err
+}
+
+func TestRevokedTokenIsRejected(t *testing.T) {
+	m := newMinter(t)
+	rev := &fakeRevoker{err: ErrRevoked}
+	v, err := NewVerifier(testProject,
+		WithKeySource(m.source()),
+		WithClock(func() time.Time { return fixedNow }),
+		WithRevocationChecker(rev))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = v.Verify(context.Background(), m.sign(t, m.claims()))
+	if !errors.Is(err, ErrRevoked) {
+		t.Fatalf("err = %v, want ErrRevoked", err)
+	}
+}
+
+func TestRevocationCheckReceivesUIDAndAuthTime(t *testing.T) {
+	m := newMinter(t)
+	rev := &fakeRevoker{}
+	v, _ := NewVerifier(testProject,
+		WithKeySource(m.source()),
+		WithClock(func() time.Time { return fixedNow }),
+		WithRevocationChecker(rev))
+
+	if _, err := v.Verify(context.Background(), m.sign(t, m.claims())); err != nil {
+		t.Fatal(err)
+	}
+	if rev.calls != 1 {
+		t.Fatalf("revocation checker called %d times, want 1", rev.calls)
+	}
+	if rev.gotUID != testUID {
+		t.Errorf("checker saw uid %q, want %q", rev.gotUID, testUID)
+	}
+	if rev.gotAT.Unix() != fixedNow.Add(-time.Minute).Unix() {
+		t.Errorf("checker saw auth_time %v, want the token's own", rev.gotAT)
+	}
+}
+
+func TestRevocationIsNotConsultedForAnInvalidToken(t *testing.T) {
+	// An upstream call per forged token would let anyone drive our Identity
+	// Toolkit quota from outside.
+	m := newMinter(t)
+	attacker := newMinter(t)
+	rev := &fakeRevoker{}
+	v, _ := NewVerifier(testProject,
+		WithKeySource(m.source()),
+		WithClock(func() time.Time { return fixedNow }),
+		WithRevocationChecker(rev))
+
+	if _, err := v.Verify(context.Background(), attacker.sign(t, attacker.claims())); err == nil {
+		t.Fatal("forged token accepted")
+	}
+	if rev.calls != 0 {
+		t.Errorf("revocation checked %d times for a forged token, want 0", rev.calls)
+	}
+}
+
+func TestWithoutACheckerVerificationStillWorks(t *testing.T) {
+	m := newMinter(t)
+	v := newVerifier(t, m) // no revocation checker configured
+
+	if _, err := v.Verify(context.Background(), m.sign(t, m.claims())); err != nil {
+		t.Errorf("verification should not require a revocation checker: %v", err)
+	}
+}

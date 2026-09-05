@@ -29,9 +29,9 @@ type Payload struct {
 	CarbsG   int `json:"carbs_g"`
 	FatG     int `json:"fat_g"`
 
-	Confidence  float64 `json:"confidence"`
-	Model       string  `json:"model"`
-	DetectedFood string `json:"detected_food,omitempty"`
+	Confidence   float64 `json:"confidence"`
+	Model        string  `json:"model"`
+	DetectedFood string  `json:"detected_food,omitempty"`
 }
 
 // MinConfidence is the floor below which a nominally valid parse is treated as

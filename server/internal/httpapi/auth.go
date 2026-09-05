@@ -64,6 +64,12 @@ func (a *API) requireAuth(next http.Handler) http.Handler {
 				unauthorized(w, "token_expired", "Your session expired. Please retry.")
 				return
 			}
+			if errors.Is(err, auth.ErrRevoked) {
+				// Distinct from expiry: refreshing will not help, because the
+				// session itself was invalidated. The client must sign in again.
+				unauthorized(w, "token_revoked", "Your session is no longer valid. Please sign in again.")
+				return
+			}
 			unauthorized(w, "unauthorized", "Sign in required.")
 			return
 		}

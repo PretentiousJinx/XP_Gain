@@ -400,10 +400,11 @@ func TestSweepClearsDirtyFlags(t *testing.T) {
 	}
 
 	var pushed int
-	n, err := store.SweepOnce(ctx, db, func(_ context.Context, rows []store.DirtyRow) error {
-		pushed = len(rows)
-		return nil
-	})
+	n, err := store.SweepOnce(ctx, db, store.PusherFunc(
+		func(_ context.Context, rows []store.DirtyRow) error {
+			pushed = len(rows)
+			return nil
+		}))
 	if err != nil {
 		t.Fatalf("sweep: %v", err)
 	}
@@ -429,9 +430,10 @@ func TestFailedPushLeavesRowsDirty(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := store.SweepOnce(ctx, db, func(context.Context, []store.DirtyRow) error {
-		return fmt.Errorf("firebase unreachable")
-	})
+	_, err := store.SweepOnce(ctx, db, store.PusherFunc(
+		func(context.Context, []store.DirtyRow) error {
+			return fmt.Errorf("firebase unreachable")
+		}))
 	if err == nil {
 		t.Fatal("a failed push must surface an error")
 	}

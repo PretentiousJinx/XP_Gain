@@ -16,7 +16,19 @@ import (
 var (
 	ErrExpired = errors.New("auth: id token expired")
 	ErrInvalid = errors.New("auth: id token invalid")
+	ErrRevoked = errors.New("auth: id token revoked")
 )
+
+// RevocationChecker reports whether a still-valid signature belongs to a
+// session that has since been revoked.
+//
+// Signature verification cannot answer this on its own: an ID token stays
+// cryptographically valid until it expires, so without this check a session
+// revoked or a password changed five minutes ago is still honoured for the
+// remainder of the token's hour.
+type RevocationChecker interface {
+	CheckRevoked(ctx context.Context, uid string, authTime time.Time) error
+}
 
 // issuerPrefix is the fixed Firebase issuer namespace.
 const issuerPrefix = "https://securetoken.google.com/"
@@ -26,13 +38,13 @@ const maxSubjectLen = 128
 
 // Token is the verified identity extracted from an ID token.
 type Token struct {
-	UID           string
-	Email         string
-	EmailVerified bool
+	UID            string
+	Email          string
+	EmailVerified  bool
 	SignInProvider string
-	AuthTime      time.Time
-	IssuedAt      time.Time
-	ExpiresAt     time.Time
+	AuthTime       time.Time
+	IssuedAt       time.Time
+	ExpiresAt      time.Time
 }
 
 type firebaseClaims struct {
@@ -54,6 +66,7 @@ type Verifier struct {
 	keys      KeySource
 	parser    *jwt.Parser
 	now       func() time.Time
+	revoked   RevocationChecker
 }
 
 // Option configures a Verifier.
@@ -68,6 +81,13 @@ func WithKeySource(ks KeySource) Option {
 // WithClock injects a deterministic clock for tests.
 func WithClock(fn func() time.Time) Option {
 	return func(v *Verifier) { v.now = fn }
+}
+
+// WithRevocationChecker enables the revocation check. Without it, verification
+// is purely cryptographic and a revoked session stays usable until its token
+// expires.
+func WithRevocationChecker(rc RevocationChecker) Option {
+	return func(v *Verifier) { v.revoked = rc }
 }
 
 // DefaultLeeway absorbs clock skew between this server and Google. It is kept
@@ -156,6 +176,19 @@ func (v *Verifier) Verify(ctx context.Context, raw string) (*Token, error) {
 		authTime := time.Unix(claims.AuthTime, 0)
 		if authTime.After(now.Add(DefaultLeeway)) {
 			return nil, fmt.Errorf("%w: auth_time is in the future", ErrInvalid)
+		}
+	}
+
+	// Revocation is checked last, once the token is known to be authentic and
+	// current. Doing it earlier would spend an upstream call on tokens that a
+	// local check was going to reject anyway.
+	if v.revoked != nil {
+		var authTime time.Time
+		if claims.AuthTime > 0 {
+			authTime = time.Unix(claims.AuthTime, 0)
+		}
+		if err := v.revoked.CheckRevoked(ctx, uid, authTime); err != nil {
+			return nil, err
 		}
 	}
 

@@ -52,27 +52,27 @@ type ManualRequest struct {
 
 // Result is the Path A response.
 type Result struct {
-	EntryID      string          `json:"entry_id"`
+	EntryID      string             `json:"entry_id"`
 	Source       domain.EntrySource `json:"source"`
-	IsManual     bool            `json:"is_manual"`
-	LocalDate    string          `json:"local_date"`
-	DayTotals    domain.Macros   `json:"day_totals"`
-	Goals        domain.Goals    `json:"goals"`
-	Remaining    domain.Macros   `json:"remaining"`
-	Character    CharacterView   `json:"character"`
-	Streak       domain.Streak   `json:"streak"`
-	XPAwarded    int             `json:"xp_awarded"`
-	LevelsGained int             `json:"levels_gained"`
-	Replayed     bool            `json:"replayed"`
+	IsManual     bool               `json:"is_manual"`
+	LocalDate    string             `json:"local_date"`
+	DayTotals    domain.Macros      `json:"day_totals"`
+	Goals        domain.Goals       `json:"goals"`
+	Remaining    domain.Macros      `json:"remaining"`
+	Character    CharacterView      `json:"character"`
+	Streak       domain.Streak      `json:"streak"`
+	XPAwarded    int                `json:"xp_awarded"`
+	LevelsGained int                `json:"levels_gained"`
+	Replayed     bool               `json:"replayed"`
 }
 
 // CharacterView is the client-facing stat line.
 type CharacterView struct {
-	Level int `json:"level"`
-	XP    int `json:"xp"`
+	Level    int `json:"level"`
+	XP       int `json:"xp"`
 	XPToNext int `json:"xp_to_next"`
-	CON   int `json:"con"`
-	VIT   int `json:"vit"`
+	CON      int `json:"con"`
+	VIT      int `json:"vit"`
 }
 
 // SubmitPhoto is the entry point for parsed Vision AI output.

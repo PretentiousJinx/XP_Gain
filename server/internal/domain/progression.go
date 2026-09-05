@@ -9,11 +9,11 @@ const (
 	VitMicroPerKCal = 1
 
 	// Calories beyond OvershootTolerance * goal drain Vitality.
-	OvershootTolerance    = 1.15
-	VitMicroPerOverKCal   = 2
-	StatFloorMicro        = 1000 // no base stat may fall below 1.000
-	XPPerCountedKCal      = 100  // divisor: 1 XP per 100 counted kcal
-	XPManualPenaltyPct    = 50   // manual entries earn half XP
+	OvershootTolerance     = 1.15
+	VitMicroPerOverKCal    = 2
+	StatFloorMicro         = 1000 // no base stat may fall below 1.000
+	XPPerCountedKCal       = 100  // divisor: 1 XP per 100 counted kcal
+	XPManualPenaltyPct     = 50   // manual entries earn half XP
 	XPFirstEntryOfDayBonus = 25
 )
 

@@ -140,8 +140,44 @@ dirty rows from the **reader** pool so a long sweep never blocks intake.
 sweep was in flight, the UPDATE matches nothing and the row correctly stays dirty
 for the next pass. Clearing the flag unconditionally would drop that edit.
 
-`SweepOnce` is wired and tested except for the `push` callback — **the Firebase
-client itself is not implemented.**
+`SweepOnce` reads whole rows, not just keys, and hands them to a `Pusher`; the
+Firestore implementation is in `internal/firebase`.
+
+### Firestore documents
+
+Rows are filed under the owning user, which makes security rules a single
+ownership check rather than a per-table policy, and makes a user's whole record
+deletable as one subtree:
+
+```
+users/{uid}                      <- profile and goals
+users/{uid}/character/state      <- singleton
+users/{uid}/streak/state         <- singleton
+users/{uid}/entries/{entryId}
+users/{uid}/rejections/{rejectionId}
+users/{uid}/dailyTotals/{localDate}
+```
+
+Writes are full-document overwrites at a deterministic path, so a batch replayed
+after an ambiguous failure converges rather than duplicating. That is what makes
+it safe to retry a batch whose outcome was never learned.
+
+Commits are chunked to Firestore's 500-write limit. `429` and `5xx` retry with
+exponential backoff plus jitter and honour `Retry-After`; `401` and `403` do not,
+because a rejected credential will not start working inside a backoff window.
+`is_synced` is stripped before sending -- it is local bookkeeping, and shipping it
+would let a restored backup look already-synced and skip its own sweep.
+
+Integers are encoded as JSON *strings*, which Firestore requires: sending them as
+numbers truncates large int64 values through JSON's float64. Columns ending in
+`_at` become real timestamps; `local_date` deliberately stays a string, because it
+is a calendar date in the user's zone and coercing it would re-anchor it to UTC
+midnight.
+
+The sweeper backs off on failure rather than retrying at its normal interval:
+rows stay dirty throughout, so nothing is lost by waiting, and hammering a failing
+Firestore would turn one outage into a second of our own making. A final flush
+runs after HTTP shutdown so the last interval of work is not left dirty.
 
 ---
 
@@ -254,7 +290,8 @@ nothing but the Flutter SDK. Only `flutter run` needs a platform toolchain
 |---|---|---|
 | `internal/domain` | 6 | Stat economy: goal clamping, non-farmability, manual XP penalty, streak transitions, level-up carry |
 | `internal/service` | 11 | Path A atomicity, Path B reasoning + no side effects, manual override pedigree, reattempt linking, double-resolve refusal, idempotent replay, concurrent writes, sync sweep + failed-push safety |
-| `internal/auth` | 19 | Signature forgery, `alg:none`, HS256 confusion, tampering, cross-project tokens, wrong issuer/audience, expiry, future `iat`/`auth_time`, subject rules, unknown/missing `kid`, garbage input |
+| `internal/auth` | 23 | Signature forgery, `alg:none`, HS256 confusion, tampering, cross-project tokens, wrong issuer/audience, expiry, future `iat`/`auth_time`, subject rules, unknown/missing `kid`, garbage input, revocation wiring |
+| `internal/firebase` | 35 | Value encoding, document mapping, commit batching, retry and no-retry classes, token exchange and caching, revocation watermark, disabled/deleted accounts, outage fallback, end-to-end sweep |
 | `internal/httpapi` | 10 | Missing and malformed credentials, scheme case-insensitivity, route gating, verifier wiring, error-detail leakage, context forgery, identity binding end to end |
 | `app/test` | 16 | Draw-call counting via a recording canvas, hidden-layer skip, slot draw order, stance row selection, frame advance and loop wrap, composite frame alignment, missing-sheet tolerance, widget lifecycle |
 
@@ -329,6 +366,29 @@ original result (`"replayed": true`) rather than double-logging.
 
 ---
 
+## Revocation
+
+Signature verification cannot detect revocation on its own: an ID token stays
+cryptographically valid until it expires, so without a further check a session
+revoked five minutes ago is honoured for the rest of its hour.
+
+`internal/firebase.Identity` closes that by consulting the account's `validSince`
+watermark via Identity Toolkit, which Firebase advances on sign-out-everywhere,
+password change and explicit revocation. Disabled and deleted accounts are
+rejected too. A revoked token returns `401` with code `token_revoked`, distinct
+from `token_expired`: refreshing will not help, so the client must sign in again.
+
+Lookups are cached per user. **The cache TTL is the revocation latency** --
+`-revocation-ttl` (default 60s) trades how long a revoked session keeps working
+against one upstream call per user per TTL. During an Identity Toolkit outage a
+stale record is reused rather than locking every user out, but a user with no
+cached state is refused, since guessing "probably fine" would let exactly the
+revoked session through that this check exists to stop.
+
+The check runs last, after the token is known to be authentic: consulting it
+earlier would spend an upstream call on forged tokens and let anyone outside
+drive our quota.
+
 ## Authentication
 
 Every `/v1/*` route is behind `requireAuth`, which verifies a Firebase Auth ID
@@ -338,8 +398,14 @@ adding an endpoint forces an explicit decision about whether it is public.
 The server refuses to start without a project ID:
 
 ```bash
-FIREBASE_PROJECT_ID=your-project-id go run ./cmd/api
+FIREBASE_PROJECT_ID=your-project-id GOOGLE_APPLICATION_CREDENTIALS=./sa.json go run ./cmd/api
 ```
+
+The project ID is mandatory. Service-account credentials are optional, but
+without them **Firestore sync is disabled and revoked sessions stay valid until
+their tokens expire** -- the server logs a warning saying exactly that rather than
+degrading in silence. A credential whose `project_id` disagrees with the
+configured project is refused at boot.
 
 That ID is the security boundary. It is checked against the token's `aud` and
 `iss`, and without it a valid ID token minted for *any other Firebase project*
@@ -364,17 +430,17 @@ a UID, and rejection reasons are logged but never returned to the caller.
 
 ## Not done yet
 
-- **No Firebase client.** `SweepOnce` needs its `push` callback implemented and a
-  ticker to drive it.
-- **No token revocation check.** A signed, unexpired token stays valid for up to
-  an hour after a session is revoked or a password changes. Closing that needs a
-  check against the Firebase Admin API or a local revocation list.
 - **No user/character provisioning.** The schema and intake path assume rows in
-  `users` and `characters`; there is no signup endpoint yet.
+  `users` and `characters`; there is no signup endpoint yet, so a freshly
+  authenticated user gets a 404 until those rows exist.
+- **No Firestore security rules in the repo.** The document layout is designed
+  for a single ownership check, but the rules themselves are not written, so the
+  database is only as safe as its console configuration.
+- **The sweeper assumes one instance.** Two servers on the same database would
+  both push -- harmless, since writes are idempotent overwrites -- but they would
+  race on `MarkSynced` and redo work. Multi-instance needs a lease.
 - **No real sprite sheets.** `app/lib/main.dart` synthesises placeholder sheets so
   the renderer runs before the art exists. `art/aseprite/Sprite-0001.aseprite` is
   the only source art carried over.
-- **No HTTP-layer tests.** `internal/httpapi` is exercised only indirectly; the
-  422 body shape and the auth gate are unverified.
 - **No golden-image test.** Draw calls are asserted, but nothing checks the
   rasterised output, so a scaling or registration regression would pass.
