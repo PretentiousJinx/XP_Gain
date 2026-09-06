@@ -220,6 +220,8 @@ void main() {
     expect(canvas.drawnImages, isEmpty);
   });
 
+  _sharedImageDisposeTest();
+
   testWidgets('AvatarView mounts, animates and disposes cleanly', (tester) async {
     var state = _state();
 
@@ -274,4 +276,17 @@ class AvatarViewHarness extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Regression: two keys may point at the same decoded image, and disposing the
+/// atlas must free it once rather than once per entry. The second free trips an
+/// assertion inside dart:ui, which surfaced as an unrelated-looking widget-tree
+/// failure the first time a shared fixture was used.
+void _sharedImageDisposeTest() {
+  test('disposing an atlas with a shared image frees it once', () async {
+    final image = await _sheetImage();
+    final shared = SpriteAtlas.fromImages({'a': image, 'b': image, 'c': image});
+
+    expect(shared.dispose, returnsNormally);
+  });
 }

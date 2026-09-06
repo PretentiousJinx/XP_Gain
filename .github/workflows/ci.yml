@@ -54,6 +54,21 @@ jobs:
           CGO_ENABLED: "1"
         run: go test -race -count=1 ./...
 
+      # The Go suite regenerates contract/*.json from real server responses.
+      # A diff here means the wire format changed without the committed
+      # fixtures being updated -- and the Flutter client parses those fixtures,
+      # so this is the check that stops server and client drifting apart.
+      - name: Contract fixtures are up to date
+        working-directory: .
+        run: |
+          if ! git diff --exit-code -- contract/; then
+            echo
+            echo "The server response shape changed but contract/ was not updated."
+            echo "Regenerate and commit:"
+            echo "  cd server && go test ./internal/httpapi/ -run TestGenerateContractFixtures"
+            exit 1
+          fi
+
   app:
     name: Flutter client
     runs-on: ubuntu-latest

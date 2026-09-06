@@ -1,0 +1,8 @@
+{
+  "can_enter_manual": true,
+  "can_retry_photo": true,
+  "code": "photo_rejected",
+  "message": "The photo was not accepted as a food log.",
+  "rejection_id": "rej_fixture",
+  "validation_reasoning": "This appears to be a photo of a desk, not a meal."
+}

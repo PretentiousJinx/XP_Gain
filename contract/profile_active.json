@@ -1,0 +1,38 @@
+{
+  "character": {
+    "con": 5,
+    "level": 1,
+    "vit": 6,
+    "xp": 20,
+    "xp_to_next": 100
+  },
+  "created": false,
+  "day_totals": {
+    "carbs_g": 100,
+    "fat_g": 35,
+    "kcal": 1150,
+    "protein_g": 75
+  },
+  "goals": {
+    "goal_carbs_g": 220,
+    "goal_fat_g": 70,
+    "goal_kcal": 2200,
+    "goal_protein_g": 160
+  },
+  "local_date": "2026-09-05",
+  "remaining": {
+    "carbs_g": 120,
+    "fat_g": 35,
+    "kcal": 1050,
+    "protein_g": 85
+  },
+  "streak": {
+    "current_streak": 1,
+    "last_activity_at": "2026-09-05T12:00:00Z",
+    "last_local_date": "2026-09-05",
+    "longest_streak": 1,
+    "user_id": "firebase-uid-real"
+  },
+  "timezone": "UTC",
+  "user_id": "firebase-uid-real"
+}

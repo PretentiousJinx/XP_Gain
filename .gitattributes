@@ -1,0 +1,9 @@
+* text=auto eol=lf
+
+# Generated contract fixtures are compared byte-for-byte by CI.
+contract/*.json text eol=lf
+
+*.png binary
+*.jpg binary
+*.ttf binary
+*.aseprite binary

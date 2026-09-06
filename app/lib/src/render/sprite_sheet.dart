@@ -141,9 +141,16 @@ class SpriteAtlas {
     });
   }
 
+  /// Releases every decoded image exactly once.
+  ///
+  /// Two keys may legitimately point at the same [ui.Image] -- an atlas built
+  /// from one sheet reused across slots, or a test fixture. Disposing per entry
+  /// would then free the same image twice, which trips an assertion inside
+  /// dart:ui rather than failing quietly, so the identity set is load-bearing.
   void dispose() {
+    final seen = Set<ui.Image>.identity();
     for (final sheet in _sheets.values) {
-      sheet.image.dispose();
+      if (seen.add(sheet.image)) sheet.image.dispose();
     }
     _sheets.clear();
   }
