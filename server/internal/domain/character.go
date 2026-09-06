@@ -45,3 +45,7 @@ type Streak struct {
 	LastLocalDate  string     `json:"last_local_date"`
 	LastActivityAt *time.Time `json:"last_activity_at,omitempty"`
 }
+
+// StartingStatMicro is the base CON and VIT a new character begins with,
+// matching the value the original prototype started every hero at.
+const StartingStatMicro = 5 * MicroPerPoint

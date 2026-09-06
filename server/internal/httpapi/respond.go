@@ -22,8 +22,9 @@ type ErrorBody struct {
 	Confidence          *float64 `json:"confidence,omitempty"`
 
 	// Recovery affordances, sent so the client does not hard-code the workflow.
-	CanRetryPhoto  bool `json:"can_retry_photo,omitempty"`
-	CanEnterManual bool `json:"can_enter_manual,omitempty"`
+	CanRetryPhoto   bool `json:"can_retry_photo,omitempty"`
+	CanEnterManual  bool `json:"can_enter_manual,omitempty"`
+	NeedsOnboarding bool `json:"needs_onboarding,omitempty"`
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -62,7 +63,14 @@ func writeError(w http.ResponseWriter, err error) {
 
 	switch {
 	case errors.Is(err, domain.ErrNotFound):
-		writeJSON(w, http.StatusNotFound, ErrorBody{Code: "not_found", Message: "Resource not found."})
+		// The overwhelmingly common cause is an authenticated user who has
+		// never been provisioned. A generic "not found" leaves the client with
+		// nothing to do; naming it tells the app to run onboarding.
+		writeJSON(w, http.StatusNotFound, ErrorBody{
+			Code:            "profile_not_found",
+			Message:         "This account has not been set up yet.",
+			NeedsOnboarding: true,
+		})
 	case errors.Is(err, domain.ErrInvalidPayload):
 		writeJSON(w, http.StatusBadRequest, ErrorBody{Code: "invalid_payload", Message: err.Error()})
 	case errors.Is(err, domain.ErrRejectionClosed):

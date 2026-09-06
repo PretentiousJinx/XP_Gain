@@ -61,3 +61,31 @@ type MacroEntry struct {
 	SupersedesID  string      `json:"supersedes_rejection_id,omitempty"`
 	LoggedAt      time.Time   `json:"logged_at"`
 }
+
+// Goal bounds. These are not style preferences: the goals are the denominator
+// of every stat award, so a goal of 1 kcal would make any meal "on target" and
+// let a player max their stats from a single snack. Validation is therefore
+// part of the economy, not input hygiene.
+const (
+	MinGoalKCal     = 800
+	MaxGoalKCal     = 10000
+	MinGoalMacroG   = 1
+	MaxGoalProteinG = 500
+	MaxGoalCarbsG   = 1200
+	MaxGoalFatG     = 500
+)
+
+// Valid reports whether the goals are inside the accepted range, and why not.
+func (g Goals) Valid() (bool, string) {
+	switch {
+	case g.KCal < MinGoalKCal || g.KCal > MaxGoalKCal:
+		return false, "goal_kcal must be between 800 and 10000"
+	case g.ProteinG < MinGoalMacroG || g.ProteinG > MaxGoalProteinG:
+		return false, "goal_protein_g must be between 1 and 500"
+	case g.CarbsG < MinGoalMacroG || g.CarbsG > MaxGoalCarbsG:
+		return false, "goal_carbs_g must be between 1 and 1200"
+	case g.FatG < MinGoalMacroG || g.FatG > MaxGoalFatG:
+		return false, "goal_fat_g must be between 1 and 500"
+	}
+	return true, ""
+}

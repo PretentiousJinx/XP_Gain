@@ -285,15 +285,23 @@ pure Go, chosen so no cgo/gcc is required. `flutter test`/`flutter analyze` need
 nothing but the Flutter SDK. Only `flutter run` needs a platform toolchain
 (Visual Studio "Desktop development with C++" for Windows; Android SDK for a phone).
 
+### Continuous integration
+
+`.github/workflows/ci.yml` runs three jobs on every push and PR to `main` or
+`dev`: the Go server (tidy check, gofmt, vet, build, `go test -race`), the
+Flutter client (`analyze` + `test`), and the Firestore rules against the emulator.
+Every step was run locally first, so the workflow lands green rather than
+becoming something to fix later.
+
 ### Test coverage
 
 | Suite | Tests | What it covers |
 |---|---|---|
 | `internal/domain` | 6 | Stat economy: goal clamping, non-farmability, manual XP penalty, streak transitions, level-up carry |
-| `internal/service` | 11 | Path A atomicity, Path B reasoning + no side effects, manual override pedigree, reattempt linking, double-resolve refusal, idempotent replay, concurrent writes, sync sweep + failed-push safety |
+| `internal/service` | 21 | Path A atomicity, Path B reasoning + no side effects, manual override pedigree, reattempt linking, double-resolve refusal, idempotent replay, concurrent writes, sync sweep + failed-push safety, provisioning idempotency, goal and timezone validation, progress preserved across goal edits |
 | `internal/auth` | 23 | Signature forgery, `alg:none`, HS256 confusion, tampering, cross-project tokens, wrong issuer/audience, expiry, future `iat`/`auth_time`, subject rules, unknown/missing `kid`, garbage input, revocation wiring |
 | `internal/firebase` | 35 | Value encoding, document mapping, commit batching, retry and no-retry classes, token exchange and caching, revocation watermark, disabled/deleted accounts, outage fallback, end-to-end sweep |
-| `internal/httpapi` | 10 | Missing and malformed credentials, scheme case-insensitivity, route gating, verifier wiring, error-detail leakage, context forgery, identity binding end to end |
+| `internal/httpapi` | 13 | Missing and malformed credentials, scheme case-insensitivity, route gating, verifier wiring, error-detail leakage, context forgery, identity binding end to end, full onboard-and-log journey |
 | `app/test` | 16 | Draw-call counting via a recording canvas, hidden-layer skip, slot draw order, stance row selection, frame advance and loop wrap, composite frame alignment, missing-sheet tolerance, widget lifecycle |
 
 `TestConcurrentSubmitsSerialiseCleanly` exercises the two-pool design — 20
@@ -341,13 +349,31 @@ CGO_ENABLED=1 go test -race ./...
 
 ```
 GET  /healthz                       (public)
-POST /v1/intake/photo    (Bearer token required)
-                         { client_entry_id, photo_uri, vision: {...},
-                           supersedes_rejection_id? }
-POST /v1/intake/manual   (Bearer token required)
-                         { client_entry_id, kcal, protein_g, carbs_g, fat_g,
-                           supersedes_rejection_id? }
+
+GET  /v1/me              (Bearer)   account state for the launch screen
+PUT  /v1/me              (Bearer)   { timezone, goal_kcal, goal_protein_g,
+                                      goal_carbs_g, goal_fat_g }
+
+POST /v1/intake/photo    (Bearer)   { client_entry_id, photo_uri, vision: {...},
+                                      supersedes_rejection_id? }
+POST /v1/intake/manual   (Bearer)   { client_entry_id, kcal, protein_g, carbs_g,
+                                      fat_g, supersedes_rejection_id? }
 ```
+
+`PUT /v1/me` provisions the account on first call (`201`) and updates goals
+thereafter (`200`). It is a PUT because it is idempotent: the client calls it at
+launch without needing to know whether this account has been seen before. The
+user row is upserted while the character and streak rows are only created if
+absent, so editing macro goals never resets a player's progress.
+
+Goals are range-checked, because they are the denominator of every stat award --
+a 1 kcal goal would make any snack "on target". An unknown IANA timezone is
+rejected rather than silently falling back to UTC, which would quietly break
+streaks for the life of the account.
+
+Any route hit by an authenticated but unprovisioned user returns `404` with
+`"code": "profile_not_found"` and `"needs_onboarding": true`, so the client knows
+to run onboarding rather than showing a generic error.
 
 Both return `201` with the entry, day totals, remaining macros, character stat
 line, and streak. Path B returns `422`:
@@ -490,9 +516,10 @@ a UID, and rejection reasons are logged but never returned to the caller.
 
 ## Not done yet
 
-- **No user/character provisioning.** The schema and intake path assume rows in
-  `users` and `characters`; there is no signup endpoint yet, so a freshly
-  authenticated user gets a 404 until those rows exist.
+- **The Flutter client does not call the API.** It renders the avatar from local
+  placeholder state; there is no HTTP layer, no token handling and no onboarding
+  screen, so the two halves of the project do not yet talk to each other. This is
+  the largest remaining piece.
 - **The rules are written and tested but not deployed.** Running
   `firebase deploy --only firestore:rules` against the real project is still a
   manual step.

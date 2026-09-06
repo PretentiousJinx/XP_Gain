@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+# Least privilege: nothing here needs to write to the repo.
+permissions:
+  contents: read
+
+concurrency:
+  # A newer push makes an in-flight run for the same ref obsolete.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  server:
+    name: Go server
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+
+      - name: Verify go.mod and go.sum are tidy
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l ./cmd ./internal)"
+          if [ -n "$unformatted" ]; then
+            echo "These files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - run: go vet ./...
+
+      - run: go build ./...
+
+      # The race detector needs cgo; ubuntu runners ship a C toolchain.
+      - name: Test with the race detector
+        env:
+          CGO_ENABLED: "1"
+        run: go test -race -count=1 ./...
+
+  app:
+    name: Flutter client
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - run: flutter pub get
+
+      - run: flutter analyze
+
+      - run: flutter test
+
+  rules:
+    name: Firestore rules
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: firestore-tests
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: firestore-tests/package-lock.json
+
+      # The Firestore emulator is a Java process.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - run: npm ci
+
+      # Runs against the emulator on the fake project id demo-xpgain; no real
+      # Firebase project or credential is involved.
+      - run: npm test

@@ -12,6 +12,10 @@ func domainMacros(kcal, protein, carbs, fat int) domain.Macros {
 	return domain.Macros{KCal: kcal, ProteinG: protein, CarbsG: carbs, FatG: fat}
 }
 
+func domainGoals(kcal, protein, carbs, fat int) domain.Goals {
+	return domain.Goals{KCal: kcal, ProteinG: protein, CarbsG: carbs, FatG: fat}
+}
+
 type statusRecorder struct {
 	http.ResponseWriter
 	status int

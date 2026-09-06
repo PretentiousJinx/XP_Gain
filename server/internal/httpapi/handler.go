@@ -32,6 +32,8 @@ func New(svc *service.Service, authenticator Authenticator) *API {
 func (a *API) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", a.health)
+	mux.Handle("GET /v1/me", a.requireAuth(http.HandlerFunc(a.getMe)))
+	mux.Handle("PUT /v1/me", a.requireAuth(http.HandlerFunc(a.putMe)))
 	mux.Handle("POST /v1/intake/photo", a.requireAuth(http.HandlerFunc(a.postPhoto)))
 	mux.Handle("POST /v1/intake/manual", a.requireAuth(http.HandlerFunc(a.postManual)))
 	return withRecovery(withLogging(mux))

@@ -383,3 +383,130 @@ func TestAuthenticatedEntryLandsUnderTheTokenUID(t *testing.T) {
 		t.Errorf("entry owner = %q, want the token UID %q", owner, authedUID)
 	}
 }
+
+// --- the full first-run journey -------------------------------------------
+
+// TestNewUserCanOnboardAndLogFood walks the path a brand-new install takes.
+// Until provisioning existed this was impossible: an authenticated user had
+// nowhere to exist, so every intake returned 404.
+func TestNewUserCanOnboardAndLogFood(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "e2e.db"), 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	srv := httptest.NewServer(New(service.New(db), okAuth()).Routes())
+	defer srv.Close()
+
+	do := func(method, path, body string) (*http.Response, map[string]any) {
+		t.Helper()
+		req, _ := http.NewRequest(method, srv.URL+path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer good-token")
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out map[string]any
+		json.NewDecoder(resp.Body).Decode(&out)
+		resp.Body.Close()
+		return resp, out
+	}
+
+	// 1. Fresh account: the client is told to onboard, not just "not found".
+	resp, body := do(http.MethodGet, "/v1/me", "")
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("GET /v1/me on a fresh account = %d, want 404", resp.StatusCode)
+	}
+	if body["code"] != "profile_not_found" || body["needs_onboarding"] != true {
+		t.Errorf("404 body does not tell the client to onboard: %v", body)
+	}
+
+	// 2. Provision.
+	resp, body = do(http.MethodPut, "/v1/me",
+		`{"timezone":"America/Los_Angeles","goal_kcal":2200,"goal_protein_g":160,
+		  "goal_carbs_g":220,"goal_fat_g":70}`)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("PUT /v1/me = %d, want 201", resp.StatusCode)
+	}
+	if body["created"] != true {
+		t.Error("first PUT should report created")
+	}
+
+	// 3. A second PUT is a settings update, not a conflict.
+	resp, body = do(http.MethodPut, "/v1/me",
+		`{"timezone":"America/Los_Angeles","goal_kcal":2400,"goal_protein_g":160,
+		  "goal_carbs_g":220,"goal_fat_g":70}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("second PUT /v1/me = %d, want 200", resp.StatusCode)
+	}
+	if body["created"] != false {
+		t.Error("second PUT should not report created")
+	}
+
+	// 4. Log a meal.
+	resp, _ = do(http.MethodPost, "/v1/intake/manual",
+		`{"client_entry_id":"e1","kcal":700,"protein_g":50,"carbs_g":60,"fat_g":20}`)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("POST intake = %d, want 201", resp.StatusCode)
+	}
+
+	// 5. The account view reflects it.
+	resp, body = do(http.MethodGet, "/v1/me", "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /v1/me = %d, want 200", resp.StatusCode)
+	}
+	totals, _ := body["day_totals"].(map[string]any)
+	if totals["kcal"] != float64(700) {
+		t.Errorf("day totals = %v, want 700 kcal", totals["kcal"])
+	}
+	streak, _ := body["streak"].(map[string]any)
+	if streak["current_streak"] != float64(1) {
+		t.Errorf("streak = %v, want 1", streak["current_streak"])
+	}
+}
+
+func TestProfileRoutesRequireAuth(t *testing.T) {
+	srv := httptest.NewServer(New(nil, okAuth()).Routes())
+	defer srv.Close()
+
+	for _, tc := range []struct{ method, path string }{
+		{http.MethodGet, "/v1/me"},
+		{http.MethodPut, "/v1/me"},
+	} {
+		req, _ := http.NewRequest(tc.method, srv.URL+tc.path, strings.NewReader(`{}`))
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("%s %s without a token = %d, want 401", tc.method, tc.path, resp.StatusCode)
+		}
+	}
+}
+
+func TestGoalsCannotBeSetToTrivialValuesOverHTTP(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "g.db"), 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	srv := httptest.NewServer(New(service.New(db), okAuth()).Routes())
+	defer srv.Close()
+
+	req, _ := http.NewRequest(http.MethodPut, srv.URL+"/v1/me",
+		strings.NewReader(`{"timezone":"UTC","goal_kcal":1,"goal_protein_g":1,"goal_carbs_g":1,"goal_fat_g":1}`))
+	req.Header.Set("Authorization", "Bearer good-token")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("a 1 kcal goal was accepted (%d); it would make any snack on-target", resp.StatusCode)
+	}
+}

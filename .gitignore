@@ -21,7 +21,6 @@ app/**/GeneratedPluginRegistrant.*
 
 # ---- Node (Firestore rules tests) ----
 node_modules/
-firestore-tests/package-lock.json
 firebase-debug.log
 firestore-debug.log
 ui-debug.log
