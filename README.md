@@ -408,11 +408,23 @@ Runs against the Firestore emulator (`firebase emulators:exec`), which needs a
 `demo-xpgain`. Seeding goes through `withSecurityRulesDisabled`, mirroring the
 service account, so the tests exercise the same asymmetry the app relies on.
 
-The suite asserts the attacks that matter: inflating your own stats, fabricating
-an entry, flipping `is_manual` to launder a typed entry as AI-verified, extending
-your own streak, lowering your own macro goals to make adherence trivial,
-resolving a rejection, reading or writing another user's subtree, and enumerating
-`/users`.
+**17 tests, verified green** against the emulator on Node 24.19.0 and Temurin
+JDK 21. They assert the attacks that matter: inflating your own stats,
+fabricating an entry, flipping `is_manual` to launder a typed entry as
+AI-verified, extending your own streak, lowering your own macro goals to make
+adherence trivial, resolving a rejection, reading or writing another user's
+subtree, and enumerating `/users`.
+
+The rules were mutation-tested like the Go code. Loosening the nested
+`allow write` to `isOwner(uid)`, widening the profile `get` to any signed-in
+caller, or making `/users` listable each makes the suite fail, so the tests are
+not passing by accident.
+
+Deploy with:
+
+```bash
+firebase deploy --only firestore:rules
+```
 
 ## Revocation
 
@@ -481,10 +493,9 @@ a UID, and rejection reasons are logged but never returned to the caller.
 - **No user/character provisioning.** The schema and intake path assume rows in
   `users` and `characters`; there is no signup endpoint yet, so a freshly
   authenticated user gets a 404 until those rows exist.
-- **The rules tests have never been executed here.** Neither Node nor a JDK is
-  installed on this machine, so `firestore.rules` and its suite are written but
-  unrun. Run them before deploying, and deploy with
-  `firebase deploy --only firestore:rules`.
+- **The rules are written and tested but not deployed.** Running
+  `firebase deploy --only firestore:rules` against the real project is still a
+  manual step.
 - **The sweeper assumes one instance.** Two servers on the same database would
   both push -- harmless, since writes are idempotent overwrites -- but they would
   race on `MarkSynced` and redo work. Multi-instance needs a lease.
