@@ -1,5 +1,7 @@
 # XP_Gain
 
+[![CI](https://github.com/PretentiousJinx/XP_Gain/actions/workflows/ci.yml/badge.svg?branch=dev)](https://github.com/PretentiousJinx/XP_Gain/actions/workflows/ci.yml)
+
 A fitness RPG: log meals by photo, and your character's base stats move with your
 nutrition adherence.
 
