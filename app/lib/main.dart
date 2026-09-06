@@ -7,6 +7,7 @@ import 'src/api/api_client.dart';
 import 'src/api/token_provider.dart';
 import 'src/app.dart';
 import 'src/auth/auth_service.dart';
+import 'src/auth/biometric_gate.dart';
 import 'src/render/sprite_sheet.dart';
 import 'src/state/app_controller.dart';
 
@@ -46,11 +47,13 @@ Future<void> main() async {
 
   final TokenProvider tokens;
   MfaEnroller? enroller;
+  SignInGateway? gateway;
 
   if (firebaseReady) {
     final auth = AuthService();
     tokens = FirebaseTokenProvider(auth.raw);
     enroller = auth;
+    gateway = auth;
   } else {
     tokens = devIdToken.isEmpty
         ? const NoTokenProvider()
@@ -63,6 +66,9 @@ Future<void> main() async {
     controller: AppController(api: api, tokens: tokens),
     loadAtlas: loadPlaceholderAtlas,
     enroller: enroller,
+    gateway: gateway,
+    // Optional by default: a phone with no enrolled biometric must still work.
+    biometricGate: BiometricGate(authenticator: LocalAuthenticator()),
   ));
 }
 

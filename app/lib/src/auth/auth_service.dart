@@ -57,9 +57,14 @@ class AuthStep {
   final AuthOutcome outcome;
   final String? message;
 
-  /// Present when [outcome] is [AuthOutcome.needsSmsCode]: Firebase's handle
-  /// for the half-finished sign-in.
-  final MultiFactorResolver? resolver;
+  /// Present when [outcome] is [AuthOutcome.needsSmsCode]: an opaque handle to
+  /// the half-finished sign-in.
+  ///
+  /// Deliberately untyped. The concrete type is Firebase's MultiFactorResolver,
+  /// which cannot be constructed outside the SDK -- typing it here would make
+  /// the whole sign-in flow untestable without a live project. Only
+  /// [AuthService] ever looks inside it.
+  final Object? resolver;
 
   /// Present once an SMS has been sent.
   final String? verificationId;
@@ -71,6 +76,27 @@ class AuthStep {
 ///
 /// The screen depends on this rather than on [AuthService] so it can be driven
 /// in tests without a configured Firebase project.
+/// The sign-in surface the screen depends on.
+///
+/// An interface rather than [AuthService] directly, so the flow can be driven
+/// in tests without a configured Firebase project.
+abstract class SignInGateway {
+  Future<AuthStep> signIn({required String email, required String password});
+  Future<AuthStep> register({required String email, required String password});
+
+  /// Sends the SMS for a sign-in waiting on its second factor.
+  Future<AuthStep> sendSignInCode(Object resolver);
+
+  /// Completes that sign-in with the typed code.
+  Future<AuthStep> submitSignInCode({
+    required Object resolver,
+    required String verificationId,
+    required String smsCode,
+  });
+
+  Future<void> sendPasswordReset(String email);
+}
+
 abstract class MfaEnroller {
   Future<AuthStep> startEnrollment(String phoneNumber);
   Future<AuthStep> confirmEnrollment({
@@ -85,13 +111,14 @@ abstract class MfaEnroller {
 /// SMS is the only factor the server can verify: resolving it mints an ID token
 /// carrying `firebase.sign_in_second_factor`, which the Go verifier checks. The
 /// biometric gate is a separate, local concern and never reaches this class.
-class AuthService implements MfaEnroller {
+class AuthService implements MfaEnroller, SignInGateway {
   AuthService([FirebaseAuth? auth]) : _auth = auth ?? FirebaseAuth.instance;
 
   final FirebaseAuth _auth;
 
   FirebaseAuth get raw => _auth;
 
+  @override
   Future<AuthStep> signIn({required String email, required String password}) async {
     try {
       await _auth.signInWithEmailAndPassword(email: email, password: password);
@@ -105,6 +132,7 @@ class AuthService implements MfaEnroller {
     }
   }
 
+  @override
   Future<AuthStep> register({required String email, required String password}) async {
     try {
       await _auth.createUserWithEmailAndPassword(email: email, password: password);
@@ -122,7 +150,9 @@ class AuthService implements MfaEnroller {
   }
 
   /// Sends the SMS for a sign-in that is waiting on its second factor.
-  Future<AuthStep> sendSignInCode(MultiFactorResolver resolver) async {
+  @override
+  Future<AuthStep> sendSignInCode(Object resolverHandle) async {
+    final resolver = resolverHandle as MultiFactorResolver;
     final hint = resolver.hints.whereType<PhoneMultiFactorInfo>().firstOrNull;
     if (hint == null) {
       return const AuthStep(AuthOutcome.failed,
@@ -151,8 +181,9 @@ class AuthService implements MfaEnroller {
   }
 
   /// Completes sign-in with the code the user typed.
+  @override
   Future<AuthStep> submitSignInCode({
-    required MultiFactorResolver resolver,
+    required Object resolver,
     required String verificationId,
     required String smsCode,
   }) async {
@@ -161,7 +192,7 @@ class AuthService implements MfaEnroller {
         PhoneAuthProvider.credential(
             verificationId: verificationId, smsCode: smsCode),
       );
-      await resolver.resolveSignIn(assertion);
+      await (resolver as MultiFactorResolver).resolveSignIn(assertion);
       return const AuthStep(AuthOutcome.signedIn);
     } on FirebaseAuthException catch (e) {
       return AuthStep(AuthOutcome.failed, message: _describe(e));
@@ -233,6 +264,7 @@ class AuthService implements MfaEnroller {
     return factors.isNotEmpty;
   }
 
+  @override
   Future<void> sendPasswordReset(String email) =>
       _auth.sendPasswordResetEmail(email: email);
 

@@ -31,6 +31,10 @@ class StaticTokenProvider implements TokenProvider {
     return _token;
   }
 
+  /// Simulates a sign-in completing, so tests can model a token appearing
+  /// mid-run the way Firebase populates currentUser.
+  void setToken(String? token) => _token = token;
+
   @override
   Future<void> signOut() async => _token = null;
 }
