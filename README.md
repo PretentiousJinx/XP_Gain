@@ -6,6 +6,7 @@ nutrition adherence.
 - `server/` — Go service. Vision AI intake, macro/stat transaction, SQLite, Firebase sync staging.
 - `app/` — Flutter client. Layered pixel-art avatar renderer.
 - `art/` — source art (Aseprite).
+- `firestore.rules` — security rules, with tests in `firestore-tests/`.
 
 > The previous .NET MAUI + MonoGame implementation was removed in favour of this
 > stack. It remains in git history at `80d1e4d` and on `origin/main`.
@@ -366,6 +367,53 @@ original result (`"replayed": true`) rather than double-logging.
 
 ---
 
+## Firestore security rules
+
+The governing fact: **the client never writes.** Every document is produced by
+the Go service sweeping its SQLite tables, and that service authenticates with a
+service account, whose requests bypass rules entirely. So denying all client
+writes costs the app nothing.
+
+It closes the only hole that would matter. Every game-economy invariant lives in
+the Go service — CON/VIT accrue only toward the daily goal, XP is halved for
+manual entries, streaks advance by local calendar day, `is_manual` records
+whether a model ever saw the food. A client that could write
+`users/{uid}/character/state` would simply set its own power level, and the
+pedigree the PvP state-check servers rely on would be worthless. **Firestore is a
+read replica for this app, not a system of record.**
+
+| Path | Client access |
+|---|---|
+| `users/{uid}` | `get` if owner; **no `list`** — that would enumerate every account |
+| `users/{uid}/**` | `get` + `list` if owner; `list` is safe only because the uid is pinned by the path |
+| everything else | denied |
+| all writes | denied |
+
+Ownership is positional: the uid is a path segment, so a request can only match
+the subtree it names. There is no field to spoof.
+
+Collection-group queries are denied by default — they match only rules with a
+`{path=**}` prefix, which this file deliberately does not provide. Adding one
+later would need to re-derive ownership from the document, since the path no
+longer pins the uid.
+
+### Testing the rules
+
+```bash
+cd firestore-tests && npm install && npm test
+```
+
+Runs against the Firestore emulator (`firebase emulators:exec`), which needs a
+**JDK on PATH**. Nothing touches a real project — the emulator uses the fake id
+`demo-xpgain`. Seeding goes through `withSecurityRulesDisabled`, mirroring the
+service account, so the tests exercise the same asymmetry the app relies on.
+
+The suite asserts the attacks that matter: inflating your own stats, fabricating
+an entry, flipping `is_manual` to launder a typed entry as AI-verified, extending
+your own streak, lowering your own macro goals to make adherence trivial,
+resolving a rejection, reading or writing another user's subtree, and enumerating
+`/users`.
+
 ## Revocation
 
 Signature verification cannot detect revocation on its own: an ID token stays
@@ -433,9 +481,10 @@ a UID, and rejection reasons are logged but never returned to the caller.
 - **No user/character provisioning.** The schema and intake path assume rows in
   `users` and `characters`; there is no signup endpoint yet, so a freshly
   authenticated user gets a 404 until those rows exist.
-- **No Firestore security rules in the repo.** The document layout is designed
-  for a single ownership check, but the rules themselves are not written, so the
-  database is only as safe as its console configuration.
+- **The rules tests have never been executed here.** Neither Node nor a JDK is
+  installed on this machine, so `firestore.rules` and its suite are written but
+  unrun. Run them before deploying, and deploy with
+  `firebase deploy --only firestore:rules`.
 - **The sweeper assumes one instance.** Two servers on the same database would
   both push -- harmless, since writes are idempotent overwrites -- but they would
   race on `MarkSynced` and redo work. Multi-instance needs a lease.

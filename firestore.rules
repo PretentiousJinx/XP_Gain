@@ -1,0 +1,69 @@
+rules_version = '2';
+
+// XP_Gain Firestore security rules.
+//
+// The governing fact: THE CLIENT NEVER WRITES. Every document in this database
+// is produced by the Go service sweeping its SQLite tables, and that service
+// authenticates with a service account, whose requests bypass these rules
+// entirely. So denying all client writes costs the app nothing and closes the
+// only hole that would matter.
+//
+// It would matter a great deal. Every game-economy invariant lives in the Go
+// service: CON/VIT accrue only toward the daily goal, XP is halved for manual
+// entries, streaks advance by local calendar day, and is_manual records whether
+// a vision model ever saw the food. A client that could write
+// users/{uid}/character/state would simply set its own power level, and the
+// pedigree the PvP state-check servers rely on would be worthless. Firestore is
+// a read replica for this app, not a system of record.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // Ownership is positional: the uid is a path segment, so a request can only
+    // ever match the subtree it names. There is no field to spoof.
+    function isOwner(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    match /users/{uid} {
+
+      // A user may fetch their own profile document.
+      allow get: if isOwner(uid);
+
+      // Never allow a query over the users collection. `list` is evaluated
+      // against the query rather than a document, so an unconstrained listing
+      // would enumerate every account in the project.
+      allow list: if false;
+
+      // Server-only, as above.
+      allow write: if false;
+
+      // Everything beneath a user: character, streak, entries, rejections,
+      // daily totals. `list` is safe here in a way it is not one level up,
+      // because the uid is already pinned by the path -- a query can only ever
+      // range over the caller's own subtree.
+      //
+      // Note this does NOT cover collection-group queries. Those are matched
+      // only by a rule with a `{path=**}` prefix, so a collectionGroup("entries")
+      // query is denied by default -- which is the outcome we want. If one is
+      // ever needed, it needs its own rule, and that rule must re-derive
+      // ownership from the document, since the path no longer pins the uid.
+      match /{document=**} {
+        allow get, list: if isOwner(uid);
+        allow write: if false;
+      }
+    }
+
+    // Everything else is denied by omission. Firestore denies any request no
+    // rule allows, so this block grants nothing -- it is here to make the
+    // intent explicit to the next reader, and to fail loudly in review if
+    // someone ever loosens it.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
