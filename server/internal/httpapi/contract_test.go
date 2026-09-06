@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/PretentiousJinx/xpgain/server/internal/auth"
 	"github.com/PretentiousJinx/xpgain/server/internal/service"
 	"github.com/PretentiousJinx/xpgain/server/internal/store"
 )
@@ -144,6 +146,25 @@ func TestGenerateContractFixtures(t *testing.T) {
 		t.Fatalf("no token = %d, want 401", resp.StatusCode)
 	}
 	write("error_unauthorized.json", raw)
+
+	// 9. A single-factor session against an MFA-enforcing deployment.
+	mfaSrv := httptest.NewServer(New(service.New(db), &fakeAuth{
+		err: fmt.Errorf("%w: sign-in used only \"password\"", auth.ErrSecondFactorRequired),
+	}).Routes())
+	defer mfaSrv.Close()
+
+	mfaReq, _ := http.NewRequest(http.MethodGet, mfaSrv.URL+"/v1/me", nil)
+	mfaReq.Header.Set("Authorization", "Bearer good-token")
+	mfaResp, err := http.DefaultClient.Do(mfaReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mfaRaw, _ := io.ReadAll(mfaResp.Body)
+	mfaResp.Body.Close()
+	if mfaResp.StatusCode != http.StatusForbidden {
+		t.Fatalf("single-factor = %d, want 403", mfaResp.StatusCode)
+	}
+	write("error_mfa_required.json", mfaRaw)
 }
 
 // volatileFields hold a fresh random value on every run.

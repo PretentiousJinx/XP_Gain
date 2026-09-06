@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 
+import 'auth/auth_service.dart';
 import 'model/avatar_layer.dart';
 import 'model/character_state.dart';
 import 'render/sprite_sheet.dart';
 import 'screens/home_screen.dart';
+import 'screens/mfa_enroll_screen.dart';
 import 'screens/onboarding_screen.dart';
 import 'state/app_controller.dart';
 
@@ -14,9 +16,15 @@ class XPGainApp extends StatefulWidget {
     super.key,
     required this.controller,
     required this.loadAtlas,
+    this.enroller,
   });
 
   final AppController controller;
+
+  /// Supplied in a real build. When absent -- as in tests that never reach the
+  /// multi-factor phase -- the enrolment screen is replaced by an explanation
+  /// rather than constructing Firebase.
+  final MfaEnroller? enroller;
 
   /// Injected so tests can supply a synthetic atlas instead of decoding assets.
   final Future<SpriteAtlas> Function() loadAtlas;
@@ -95,6 +103,21 @@ class _XPGainAppState extends State<XPGainApp> {
 
       case AppPhase.signedOut:
         return _SignedOut(controller: c, message: c.errorMessage);
+
+      case AppPhase.mfaRequired:
+        final enroller = widget.enroller;
+        if (enroller == null) {
+          return _Failed(controller: c);
+        }
+        return MfaEnrollScreen(
+          enroller: enroller,
+          message: c.errorMessage,
+          onSignOut: c.signOut,
+          // Re-bootstrap rather than assuming success: the fresh token now
+          // carries the second-factor claim, and the server is the thing that
+          // decides whether that is enough.
+          onEnrolled: c.bootstrap,
+        );
 
       case AppPhase.onboarding:
         return OnboardingScreen(controller: c);

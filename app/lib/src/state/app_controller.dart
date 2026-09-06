@@ -8,7 +8,18 @@ import '../api/models.dart';
 import '../api/token_provider.dart';
 
 /// Where the app is in its lifecycle.
-enum AppPhase { loading, signedOut, onboarding, ready, failed }
+enum AppPhase {
+  loading,
+  signedOut,
+
+  /// Signed in, but the account has no phone factor and the server insists on
+  /// one. The session is kept, because enrolling requires it.
+  mfaRequired,
+
+  onboarding,
+  ready,
+  failed,
+}
 
 /// Owns all server-backed state and the transitions between screens.
 ///
@@ -66,6 +77,11 @@ class AppController extends ChangeNotifier {
     } on NeedsOnboarding {
       // Expected for a brand-new account, not an error worth showing.
       _set(() => phase = AppPhase.onboarding);
+    } on MfaRequired catch (e) {
+      _set(() {
+        phase = AppPhase.mfaRequired;
+        errorMessage = e.message;
+      });
     } on SessionRevoked catch (e) {
       _set(() {
         phase = AppPhase.signedOut;
@@ -182,6 +198,12 @@ class AppController extends ChangeNotifier {
       return await action();
     } on NeedsOnboarding {
       _set(() => phase = AppPhase.onboarding);
+      return false;
+    } on MfaRequired catch (e) {
+      _set(() {
+        phase = AppPhase.mfaRequired;
+        errorMessage = e.message;
+      });
       return false;
     } on SessionRevoked catch (e) {
       _set(() {

@@ -455,6 +455,50 @@ Deploy with:
 firebase deploy --only firestore:rules
 ```
 
+## Sign-in and multi-factor
+
+Email/password via Firebase Auth, with **SMS as the second factor**.
+
+### SMS and biometrics are not the same thing
+
+This distinction drives the whole design, so it is worth stating plainly:
+
+| | SMS second factor | Device biometric |
+|---|---|---|
+| Happens during | Firebase sign-in | App launch, locally |
+| Produces | an ID token carrying `firebase.sign_in_second_factor` | nothing |
+| Server can verify it | **yes** | **no** |
+| Can create a session | yes | **no** |
+
+A fingerprint mints no token and sets no claim, so the server cannot tell one
+happened and a client could simply claim it did. `BiometricGate` therefore
+unlocks an **already-established** session and nothing more — it is a
+convenience and a privacy screen, never a factor and never a login. If it could
+sign a user in, anyone who can add a fingerprint to the device would own the
+account. `TestBiometricCannotSatisfyTheSecondFactorRequirement` pins this: a
+client-asserted `biometric_verified` claim is still refused.
+
+### Enforcement
+
+`-require-mfa` makes the verifier reject any session without a second factor.
+It lives in the verifier rather than per-handler, so a route added later cannot
+accidentally opt out. A single-factor session gets **403 `mfa_required`** with
+`needs_mfa_enrollment` — 403 rather than 401 because the credential is genuine
+and refreshing changes nothing.
+
+The client keeps that session rather than signing out, because enrolling a
+factor requires being signed in. Signing out would strand the user in a loop
+where the only way to satisfy the server is a step they can no longer take.
+After enrolment the token is force-refreshed to pick up the new claim, then the
+app re-bootstraps and lets the server decide whether it is now satisfied.
+
+```bash
+FIREBASE_PROJECT_ID=your-project-id -require-mfa go run ./cmd/api
+```
+
+SMS MFA requires **Google Cloud Identity Platform** (the paid upgrade to
+Firebase Auth) and must be enabled in the console.
+
 ## Revocation
 
 Signature verification cannot detect revocation on its own: an ID token stays
@@ -562,10 +606,14 @@ stayed green — which is precisely why the generated fixtures exist.
 
 ## Not done yet
 
-- **No real sign-in.** `TokenProvider` is the seam, but the only implementations
-  are a static token and a signed-out stub. Wiring `firebase_auth` needs platform
-  directories and a `google-services.json` from a real project, so it is one
-  class plus configuration, not a redesign.
+- **No Firebase project is configured.** `flutterfire configure` generates
+  `google-services.json`, `GoogleService-Info.plist` and `firebase_options.dart`,
+  none of which are in the repo. Without them `main.dart` logs a warning and
+  falls back to the `DEV_ID_TOKEN` path rather than crashing, so the auth code
+  paths are written and unit-tested but have never run against real Firebase.
+- **No sign-in screen.** `AuthService` covers email/password, MFA enrolment and
+  MFA resolution, but the only UI is the enrolment screen; the signed-out screen
+  still just offers Retry.
 - **No camera or Vision AI call.** `_capture` in the home screen fills a
   `VisionPayload` with fixed values. The server owns the accept/reject decision,
   so replacing that stub changes nothing below it.

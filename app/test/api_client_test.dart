@@ -11,14 +11,14 @@ import 'package:xp_gain/src/api/token_provider.dart';
 const _base = 'http://localhost:8080';
 
 /// Captures the requests the client makes so tests can assert on the wire.
-class _Recorder {
+class Recorder {
   final List<http.Request> requests = [];
 }
 
 ApiClient clientThat(
   Future<http.Response> Function(http.Request req) handler, {
   TokenProvider? tokens,
-  _Recorder? recorder,
+  Recorder? recorder,
 }) {
   return ApiClient(
     baseUrl: _base,
@@ -54,7 +54,7 @@ Map<String, dynamic> get _profileJson => {
 void main() {
   group('requests', () {
     test('attaches the bearer token', () async {
-      final rec = _Recorder();
+      final rec = Recorder();
       final api = clientThat((_) async => _json(_profileJson), recorder: rec);
 
       await api.getProfile();
@@ -77,7 +77,7 @@ void main() {
     });
 
     test('manual submit carries the idempotency key and rejection link', () async {
-      final rec = _Recorder();
+      final rec = Recorder();
       final api = clientThat((_) async => _json({'entry_id': 'e1'}, status: 201),
           recorder: rec);
 
@@ -94,7 +94,7 @@ void main() {
     });
 
     test('omits the rejection link when there is none', () async {
-      final rec = _Recorder();
+      final rec = Recorder();
       final api = clientThat((_) async => _json({'entry_id': 'e1'}, status: 201),
           recorder: rec);
 
@@ -108,7 +108,7 @@ void main() {
     });
 
     test('profile PUT flattens goals to the server field names', () async {
-      final rec = _Recorder();
+      final rec = Recorder();
       final api = clientThat((_) async => _json(_profileJson, status: 201), recorder: rec);
 
       await api.putProfile(timezone: 'UTC', goals: Goals.defaults);

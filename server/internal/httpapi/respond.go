@@ -25,6 +25,10 @@ type ErrorBody struct {
 	CanRetryPhoto   bool `json:"can_retry_photo,omitempty"`
 	CanEnterManual  bool `json:"can_enter_manual,omitempty"`
 	NeedsOnboarding bool `json:"needs_onboarding,omitempty"`
+
+	// Set when the account must finish multi-factor enrolment before the API
+	// will serve it.
+	NeedsMFAEnrollment bool `json:"needs_mfa_enrollment,omitempty"`
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

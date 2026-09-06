@@ -166,6 +166,9 @@ class ApiClient {
         // than letting the UI retry into a guaranteed failure.
         await tokens.signOut();
         return SessionRevoked(message);
+      case 'mfa_required':
+        // Deliberately does NOT sign out: the session is needed to enrol.
+        return MfaRequired(message);
       case 'unauthorized':
         return Unauthorized(message);
       case 'invalid_payload':
@@ -175,6 +178,7 @@ class ApiClient {
     }
 
     // Unknown code: fall back to the status class.
+    if (response.statusCode == 403) return MfaRequired(message);
     if (response.statusCode == 401) return Unauthorized(message);
     if (response.statusCode == 404) return NeedsOnboarding(message);
     if (response.statusCode >= 400 && response.statusCode < 500) {

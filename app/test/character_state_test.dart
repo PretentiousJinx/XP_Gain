@@ -2,10 +2,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:xp_gain/src/model/avatar_layer.dart';
 import 'package:xp_gain/src/model/character_state.dart';
 
-CharacterState _fixture() => CharacterState(
+CharacterState _fixture() => const CharacterState(
       con: 5,
       vit: 5,
-      layers: const [
+      layers: [
         AvatarLayer(
           id: 'body',
           slot: EquipmentSlot.body,
@@ -62,7 +62,7 @@ void main() {
   });
 
   test('draw order follows slot declaration order, not list order', () {
-    final scrambled = CharacterState(layers: const [
+    const scrambled = CharacterState(layers: [
       AvatarLayer(
           id: 'w', slot: EquipmentSlot.weapon, spriteSheetKey: 'w', powerLevel: 1),
       AvatarLayer(

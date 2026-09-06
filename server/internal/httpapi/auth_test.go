@@ -510,3 +510,74 @@ func TestGoalsCannotBeSetToTrivialValuesOverHTTP(t *testing.T) {
 		t.Errorf("a 1 kcal goal was accepted (%d); it would make any snack on-target", resp.StatusCode)
 	}
 }
+
+// --- multi-factor at the transport layer ----------------------------------
+
+func TestMFARequiredIsForbiddenNotUnauthorized(t *testing.T) {
+	// 403, not 401: the credential is genuine and refreshing changes nothing.
+	// A 401 would send the client into a pointless refresh loop instead of the
+	// enrolment flow.
+	api := &API{auth: &fakeAuth{
+		err: fmt.Errorf("%w: sign-in used only \"password\"", auth.ErrSecondFactorRequired),
+	}}
+
+	h := api.requireAuth(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Error("a single-factor session reached the handler")
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/me", nil)
+	req.Header.Set("Authorization", "Bearer good-token")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want 403", rec.Code)
+	}
+
+	var body ErrorBody
+	json.NewDecoder(rec.Body).Decode(&body)
+	if body.Code != "mfa_required" {
+		t.Errorf("code = %q, want mfa_required", body.Code)
+	}
+	if !body.NeedsMFAEnrollment {
+		t.Error("the client needs needs_mfa_enrollment to route to enrolment")
+	}
+	if !strings.Contains(rec.Header().Get("WWW-Authenticate"), "insufficient_authentication") {
+		t.Errorf("WWW-Authenticate = %q", rec.Header().Get("WWW-Authenticate"))
+	}
+}
+
+func TestMFAEnforcementCoversEveryProtectedRoute(t *testing.T) {
+	// Enforcement lives in the verifier, so a route added later cannot opt out.
+	fa := &fakeAuth{err: fmt.Errorf("%w: nope", auth.ErrSecondFactorRequired)}
+	srv := httptest.NewServer(New(nil, fa).Routes())
+	defer srv.Close()
+
+	for _, tc := range []struct{ method, path string }{
+		{http.MethodGet, "/v1/me"},
+		{http.MethodPut, "/v1/me"},
+		{http.MethodPost, "/v1/intake/photo"},
+		{http.MethodPost, "/v1/intake/manual"},
+	} {
+		req, _ := http.NewRequest(tc.method, srv.URL+tc.path, strings.NewReader(`{}`))
+		req.Header.Set("Authorization", "Bearer good-token")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusForbidden {
+			t.Errorf("%s %s = %d, want 403", tc.method, tc.path, resp.StatusCode)
+		}
+	}
+
+	// Health stays public so a load balancer is not blocked by an auth policy.
+	resp, err := http.Get(srv.URL + "/healthz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("/healthz = %d, want 200", resp.StatusCode)
+	}
+}

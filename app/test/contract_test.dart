@@ -49,7 +49,7 @@ void main() {
     final dir = Directory(_dir);
     expect(dir.existsSync(), isTrue,
         reason: 'run the Go generator before the Dart contract tests');
-    expect(dir.listSync().whereType<File>().length, greaterThanOrEqualTo(8));
+    expect(dir.listSync().whereType<File>().length, greaterThanOrEqualTo(9));
   });
 
   group('profile', () {
@@ -140,6 +140,11 @@ void main() {
       }
     });
 
+    test('a single-factor session maps to MfaRequired', () async {
+      final api = clientServing('error_mfa_required.json', 403);
+      await expectLater(api.getProfile(), throwsA(isA<MfaRequired>()));
+    });
+
     test('a missing credential maps to Unauthorized', () async {
       final api = clientServing('error_unauthorized.json', 401);
       await expectLater(api.getProfile(), throwsA(isA<Unauthorized>()));
@@ -178,6 +183,12 @@ void main() {
         'can_retry_photo', 'can_enter_manual',
       ]));
       expect(j['code'], 'photo_rejected');
+    });
+
+    test('the MFA body keys are the ones the client reads', () {
+      final j = load('error_mfa_required.json');
+      expect(j['code'], 'mfa_required');
+      expect(j['needs_mfa_enrollment'], true);
     });
 
     test('error codes the client switches on are stable', () {

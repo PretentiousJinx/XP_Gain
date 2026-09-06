@@ -17,6 +17,10 @@ var (
 	ErrExpired = errors.New("auth: id token expired")
 	ErrInvalid = errors.New("auth: id token invalid")
 	ErrRevoked = errors.New("auth: id token revoked")
+
+	// ErrSecondFactorRequired means the credential is genuine but the account
+	// has not completed multi-factor sign-in.
+	ErrSecondFactorRequired = errors.New("auth: second factor required")
 )
 
 // RevocationChecker reports whether a still-valid signature belongs to a
@@ -42,10 +46,22 @@ type Token struct {
 	Email          string
 	EmailVerified  bool
 	SignInProvider string
-	AuthTime       time.Time
-	IssuedAt       time.Time
-	ExpiresAt      time.Time
+
+	// SecondFactor names the factor used at sign-in ("phone" for SMS), or is
+	// empty when the session is single-factor.
+	//
+	// This is the only multi-factor signal that exists server-side. A device
+	// biometric prompt produces no claim and no token of its own, so it cannot
+	// be verified here and must never be treated as equivalent.
+	SecondFactor string
+
+	AuthTime  time.Time
+	IssuedAt  time.Time
+	ExpiresAt time.Time
 }
+
+// HasSecondFactor reports whether the session completed multi-factor sign-in.
+func (t Token) HasSecondFactor() bool { return t.SecondFactor != "" }
 
 type firebaseClaims struct {
 	jwt.RegisteredClaims
@@ -53,7 +69,8 @@ type firebaseClaims struct {
 	Email         string `json:"email"`
 	EmailVerified bool   `json:"email_verified"`
 	Firebase      struct {
-		SignInProvider string `json:"sign_in_provider"`
+		SignInProvider     string `json:"sign_in_provider"`
+		SignInSecondFactor string `json:"sign_in_second_factor"`
 	} `json:"firebase"`
 }
 
@@ -67,6 +84,9 @@ type Verifier struct {
 	parser    *jwt.Parser
 	now       func() time.Time
 	revoked   RevocationChecker
+
+	// requireSecondFactor rejects single-factor sessions outright.
+	requireSecondFactor bool
 }
 
 // Option configures a Verifier.
@@ -88,6 +108,15 @@ func WithClock(fn func() time.Time) Option {
 // expires.
 func WithRevocationChecker(rc RevocationChecker) Option {
 	return func(v *Verifier) { v.revoked = rc }
+}
+
+// WithRequiredSecondFactor rejects any token whose session did not complete
+// multi-factor sign-in.
+//
+// Enforced here rather than per-handler so a new endpoint cannot accidentally
+// opt out of it: every route behind the verifier inherits the policy.
+func WithRequiredSecondFactor() Option {
+	return func(v *Verifier) { v.requireSecondFactor = true }
 }
 
 // DefaultLeeway absorbs clock skew between this server and Google. It is kept
@@ -192,11 +221,19 @@ func (v *Verifier) Verify(ctx context.Context, raw string) (*Token, error) {
 		}
 	}
 
+	// The second factor is checked after authenticity but before revocation, so
+	// a single-factor token never costs an upstream lookup.
+	if v.requireSecondFactor && claims.Firebase.SignInSecondFactor == "" {
+		return nil, fmt.Errorf("%w: sign-in used only %q",
+			ErrSecondFactorRequired, claims.Firebase.SignInProvider)
+	}
+
 	tok := &Token{
 		UID:            uid,
 		Email:          claims.Email,
 		EmailVerified:  claims.EmailVerified,
 		SignInProvider: claims.Firebase.SignInProvider,
+		SecondFactor:   claims.Firebase.SignInSecondFactor,
 	}
 	if claims.AuthTime > 0 {
 		tok.AuthTime = time.Unix(claims.AuthTime, 0)

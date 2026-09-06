@@ -1,0 +1,5 @@
+{
+  "code": "mfa_required",
+  "message": "Two-factor authentication is required on this account.",
+  "needs_mfa_enrollment": true
+}

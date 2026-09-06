@@ -36,6 +36,8 @@ func main() {
 		syncEvery = flag.Duration("sync-interval", 30*time.Second, "how often to sweep dirty rows to Firestore")
 		revokeTTL = flag.Duration("revocation-ttl", time.Minute,
 			"how long an account's revocation state is cached; this is the revocation latency")
+		requireMFA = flag.Bool("require-mfa", false,
+			"reject sessions that did not complete SMS multi-factor sign-in")
 	)
 	flag.Parse()
 
@@ -53,6 +55,15 @@ func main() {
 	}
 
 	authOpts := []auth.Option{}
+	if *requireMFA {
+		// Device biometrics deliberately do not satisfy this: they produce no
+		// token claim, so the server cannot verify one happened.
+		authOpts = append(authOpts, auth.WithRequiredSecondFactor())
+		slog.Info("multi-factor sign-in is required")
+	} else {
+		slog.Warn("multi-factor sign-in is NOT required; single-factor sessions are accepted",
+			"hint", "pass -require-mfa once enrolment has rolled out")
+	}
 	var pusher store.Pusher
 
 	// Service-account credentials are optional, but their absence disables two

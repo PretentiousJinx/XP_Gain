@@ -64,6 +64,18 @@ func (a *API) requireAuth(next http.Handler) http.Handler {
 				unauthorized(w, "token_expired", "Your session expired. Please retry.")
 				return
 			}
+			if errors.Is(err, auth.ErrSecondFactorRequired) {
+				// 403, not 401: the credential is genuine and refreshing it
+				// changes nothing. The account has to enrol a second factor,
+				// which happens against Firebase directly, not through us.
+				w.Header().Set("WWW-Authenticate", `Bearer realm="xpgain", error="insufficient_authentication"`)
+				writeJSON(w, http.StatusForbidden, ErrorBody{
+					Code:               "mfa_required",
+					Message:            "Two-factor authentication is required on this account.",
+					NeedsMFAEnrollment: true,
+				})
+				return
+			}
 			if errors.Is(err, auth.ErrRevoked) {
 				// Distinct from expiry: refreshing will not help, because the
 				// session itself was invalidated. The client must sign in again.

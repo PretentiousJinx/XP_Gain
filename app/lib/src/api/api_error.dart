@@ -56,6 +56,17 @@ class SessionRevoked extends ApiException {
   const SessionRevoked([super.message = 'Please sign in again.']);
 }
 
+/// The credential is genuine, but the account has not completed multi-factor
+/// sign-in and the server requires it.
+///
+/// Distinct from [Unauthorized] because refreshing the token cannot fix it and
+/// signing out would lose the session needed to *enrol*. The only way forward
+/// is to add a phone factor, then mint a fresh token carrying the claim.
+@immutable
+class MfaRequired extends ApiException {
+  const MfaRequired([super.message = 'Two-factor authentication is required.']);
+}
+
 /// Not signed in, or the token was rejected outright.
 @immutable
 class Unauthorized extends ApiException {

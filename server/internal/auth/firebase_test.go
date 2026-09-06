@@ -457,3 +457,125 @@ func TestWithoutACheckerVerificationStillWorks(t *testing.T) {
 		t.Errorf("verification should not require a revocation checker: %v", err)
 	}
 }
+
+// --- multi-factor -----------------------------------------------------------
+
+func mfaVerifier(t *testing.T, m *minter) *Verifier {
+	t.Helper()
+	v, err := NewVerifier(testProject,
+		WithKeySource(m.source()),
+		WithClock(func() time.Time { return fixedNow }),
+		WithRequiredSecondFactor())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return v
+}
+
+func TestSingleFactorTokenIsRejectedWhenMFARequired(t *testing.T) {
+	m := newMinter(t)
+	v := mfaVerifier(t, m)
+
+	// A perfectly valid password sign-in, with no second factor.
+	_, err := v.Verify(context.Background(), m.sign(t, m.claims()))
+	if !errors.Is(err, ErrSecondFactorRequired) {
+		t.Fatalf("err = %v, want ErrSecondFactorRequired", err)
+	}
+}
+
+func TestSMSSecondFactorSatisfiesTheRequirement(t *testing.T) {
+	m := newMinter(t)
+	v := mfaVerifier(t, m)
+
+	c := m.claims()
+	c["firebase"] = map[string]any{
+		"sign_in_provider":      "password",
+		"sign_in_second_factor": "phone",
+	}
+
+	tok, err := v.Verify(context.Background(), m.sign(t, c))
+	if err != nil {
+		t.Fatalf("an SMS-verified session was rejected: %v", err)
+	}
+	if tok.SecondFactor != "phone" {
+		t.Errorf("SecondFactor = %q, want phone", tok.SecondFactor)
+	}
+	if !tok.HasSecondFactor() {
+		t.Error("HasSecondFactor should be true")
+	}
+}
+
+func TestBiometricCannotSatisfyTheSecondFactorRequirement(t *testing.T) {
+	// The distinction this whole policy rests on. A device biometric prompt is
+	// a local unlock: it mints no token and sets no claim, so a client cannot
+	// assert it happened and the server must not accept a session as
+	// multi-factor on the strength of it.
+	m := newMinter(t)
+	v := mfaVerifier(t, m)
+
+	// Whatever a client might try to smuggle in, it is not a Firebase claim.
+	c := m.claims()
+	c["biometric_verified"] = true
+	c["device_unlocked"] = true
+	c["firebase"] = map[string]any{"sign_in_provider": "password"}
+
+	if _, err := v.Verify(context.Background(), m.sign(t, c)); !errors.Is(err, ErrSecondFactorRequired) {
+		t.Fatalf("a client-asserted biometric flag was accepted as a second factor: %v", err)
+	}
+}
+
+func TestSecondFactorIsReportedWhenNotRequired(t *testing.T) {
+	// Even with enforcement off, the claim is surfaced so an audit or a
+	// per-action policy can use it.
+	m := newMinter(t)
+	v := newVerifier(t, m)
+
+	c := m.claims()
+	c["firebase"] = map[string]any{
+		"sign_in_provider":      "password",
+		"sign_in_second_factor": "phone",
+	}
+
+	tok, err := v.Verify(context.Background(), m.sign(t, c))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tok.SecondFactor != "phone" {
+		t.Errorf("SecondFactor = %q, want it surfaced even when not enforced", tok.SecondFactor)
+	}
+}
+
+func TestSingleFactorIsAcceptedWhenNotRequired(t *testing.T) {
+	m := newMinter(t)
+	v := newVerifier(t, m)
+
+	tok, err := v.Verify(context.Background(), m.sign(t, m.claims()))
+	if err != nil {
+		t.Fatalf("single-factor should pass when MFA is not required: %v", err)
+	}
+	if tok.HasSecondFactor() {
+		t.Error("HasSecondFactor should be false for a password-only session")
+	}
+}
+
+func TestForgedTokenIsRejectedBeforeTheMFACheck(t *testing.T) {
+	// Ordering matters: an attacker must not learn whether MFA is enforced by
+	// comparing responses to forged tokens.
+	m := newMinter(t)
+	attacker := newMinter(t)
+	v := mfaVerifier(t, m)
+
+	c := attacker.claims()
+	c["firebase"] = map[string]any{
+		"sign_in_provider":      "password",
+		"sign_in_second_factor": "phone",
+	}
+
+	err := func() error {
+		_, e := v.Verify(context.Background(), attacker.sign(t, c))
+		return e
+	}()
+	if !errors.Is(err, ErrInvalid) {
+		t.Fatalf("err = %v, want ErrInvalid for a forged token", err)
+	}
+}
